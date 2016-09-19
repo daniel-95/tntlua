@@ -486,3 +486,69 @@ function profile_print_specific_str_int_key_bit(key_id, bit_n)
         bit_n
     )
 end
+
+function profile_print_fields_length(min_field_len_kb)
+    if box.cfg.replication_source == nil then error("replica api only") end
+
+    -- arrays for statistics
+    user_count_per_field = {}
+    total_field_size_per_field = {}
+    iter = 1
+
+    profile_apply_func(
+        function (profile, min_field_len)
+            local to_print = ""
+            local total_bytes = 0
+            for pref_id, pref_value in pairs(profile.prefs) do
+                local l = pref_value:len()
+                local key_id, _ = box.unpack('wa', pref_id)
+
+                if user_count_per_field[key_id] then
+                    user_count_per_field[key_id] = user_count_per_field[key_id] + tonumber64(1)
+                else
+                    user_count_per_field[key_id] = tonumber64(1)
+                end
+
+                if total_field_size_per_field[key_id] then
+                    total_field_size_per_field[key_id] = total_field_size_per_field[key_id] + tonumber64(l)
+                else
+                    total_field_size_per_field[key_id] = tonumber64(l)
+                end
+
+                if l >= min_field_len then
+                    to_print = table.concat({to_print , " ", tostring(key_id), "=", tostring(l)})
+                end
+                total_bytes = total_bytes + l
+            end
+            if total_bytes > min_field_len then
+                print(table.concat({"big fields for profile_id=", tostring(profile_id_to_int(profile.id)), ": total=", tostring(total_bytes), to_print}))
+            end
+            if iter % 1000000 == 0 then
+                print_formatted_stat(iter, total_field_size_per_field, user_count_per_field)
+            end
+            iter = iter + 1
+        end, min_field_len_kb * 1024
+    )
+    print_formatted_stat("all", total_field_size_per_field, user_count_per_field)
+end
+
+function print_formatted_stat(already_done, total_field_size_per_field, user_count_per_field)
+    user_count_to_print = ""
+    total_size_to_print = ""
+    avg_stat_to_print = ""
+
+    for k, v in pairs(total_field_size_per_field) do
+        user_count_to_print = table.concat({user_count_to_print, " ", k, "=", tostring(user_count_per_field[k]):sub(1, -4)})
+        total_size_to_print = table.concat({total_size_to_print, " ", k, "=", tostring(v):sub(1, -4)})
+        avg_size = v / user_count_per_field[k]
+        avg_stat_to_print = table.concat({avg_stat_to_print, " ", k, "=", tostring(avg_size):sub(1, -4)})
+    end
+    print("-----STAT-----")
+    print(table.concat({iter, " tuples analysed:"}))
+    print(table.concat({"Count of users with every field: ", user_count_to_print}))
+    print('---')
+    print(table.concat({"Total size for every field:", total_size_to_print}))
+    print('---')
+    print(table.concat({"Average size for every field: ", avg_stat_to_print}))
+    print("--------------")
+end
